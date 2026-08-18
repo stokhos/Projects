@@ -1,0 +1,797 @@
+<title>UDP Merger Anatomy</title>
+<style>
+  :root {
+    --bg: #edebe3;
+    --surface: #f7f5ef;
+    --surface-2: #e2ded2;
+    --text: #24221d;
+    --text-muted: #6b6858;
+    --border: #d6d2c4;
+    --accent: #8a5f22;
+    --accent-strong: #6e4a19;
+    --feed-a: #2b6e63;
+    --feed-a-soft: #e2ede9;
+    --feed-b: #a6432b;
+    --feed-b-soft: #f3e4de;
+    --dup: #6b6858;
+    --dup-soft: #e2ded2;
+    --code-bg: #e8e4d7;
+    --shadow: 0 1px 2px rgba(36,34,29,0.06);
+    --serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16150f;
+      --surface: #1e1c15;
+      --surface-2: #27241b;
+      --text: #ece7d8;
+      --text-muted: #9c9686;
+      --border: #38341f;
+      --accent: #cb9c4f;
+      --accent-strong: #e3b467;
+      --feed-a: #6cb3a2;
+      --feed-a-soft: #1c2b26;
+      --feed-b: #dd8a68;
+      --feed-b-soft: #2c211b;
+      --dup: #9c9686;
+      --dup-soft: #27241b;
+      --code-bg: #201e15;
+      --shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16150f;
+    --surface: #1e1c15;
+    --surface-2: #27241b;
+    --text: #ece7d8;
+    --text-muted: #9c9686;
+    --border: #38341f;
+    --accent: #cb9c4f;
+    --accent-strong: #e3b467;
+    --feed-a: #6cb3a2;
+    --feed-a-soft: #1c2b26;
+    --feed-b: #dd8a68;
+    --feed-b-soft: #2c211b;
+    --dup: #9c9686;
+    --dup-soft: #27241b;
+    --code-bg: #201e15;
+    --shadow: 0 1px 3px rgba(0,0,0,0.4);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--serif);
+    font-size: 17px;
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  a { color: var(--accent-strong); }
+  a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    max-width: 1160px;
+    margin: 0 auto;
+  }
+
+  .masthead {
+    grid-column: 1 / -1;
+    padding: 3rem 2rem 1.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .masthead .kicker {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent-strong);
+  }
+  .masthead h1 {
+    font-size: clamp(1.8rem, 3.4vw, 2.5rem);
+    margin: 0.35rem 0 0.6rem;
+    text-wrap: balance;
+    font-weight: 600;
+  }
+  .masthead p {
+    max-width: 62ch;
+    color: var(--text-muted);
+    margin: 0 0 0.9rem;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.1rem;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--text-muted);
+  }
+  .legend .dot {
+    display: inline-block;
+    width: 0.6em;
+    height: 0.6em;
+    border-radius: 50%;
+    margin-right: 0.4em;
+    vertical-align: middle;
+  }
+  .legend .dot.a { background: var(--feed-a); }
+  .legend .dot.b { background: var(--feed-b); }
+  .legend .dot.dup { background: var(--dup); opacity: 0.8; }
+  .legend .dot.acc { background: var(--accent); }
+
+  .stack-nav {
+    padding: 2rem 1.1rem 2rem 2rem;
+    position: sticky;
+    top: 0;
+    align-self: start;
+    max-height: 100vh;
+    overflow-y: auto;
+  }
+  .stack-nav h2 {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 0 0 1rem;
+    font-weight: 600;
+  }
+  .stack-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .stack-list a {
+    display: flex;
+    align-items: baseline;
+    gap: 0.55rem;
+    text-decoration: none;
+    color: var(--text);
+    padding: 0.5rem 0.6rem;
+    border-radius: 3px;
+    border-left: 2px solid var(--border);
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .stack-list a:hover, .stack-list a:focus-visible {
+    background: var(--surface);
+    border-left-color: var(--accent);
+  }
+  .stack-list .n { font-family: var(--mono); font-size: 0.7rem; color: var(--text-muted); width: 1.1em; }
+  .stack-list .name { font-weight: 600; font-size: 0.87rem; }
+  .stack-list .role { display: block; font-size: 0.71rem; color: var(--text-muted); font-family: var(--mono); }
+  .stack-foot {
+    margin-top: 1.1rem;
+    padding: 0.6rem 0.6rem 0;
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    color: var(--text-muted);
+    border-top: 1px dashed var(--border);
+  }
+
+  main { padding: 0 2rem 6rem 1.75rem; min-width: 0; }
+  section.module { max-width: 74ch; padding-top: 3.2rem; scroll-margin-top: 1.5rem; }
+  section.module + section.module { border-top: 1px solid var(--border); }
+
+  .module-head { display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.3rem; }
+  .module-head .idx {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--accent-strong);
+    background: var(--surface-2);
+    border-radius: 3px;
+    padding: 0.12rem 0.45rem;
+  }
+  .module-head h2 { font-size: 1.5rem; margin: 0; font-weight: 600; }
+  .module-file { font-family: var(--mono); font-size: 0.78rem; color: var(--text-muted); margin: 0 0 1rem; }
+  .module p.lede { color: var(--text); max-width: 68ch; }
+
+  h3.subhead {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 2rem 0 0.8rem;
+    font-weight: 600;
+  }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 0.55rem 0.85rem; vertical-align: top; }
+  thead th {
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+  }
+  tbody tr + tr td { border-top: 1px solid var(--border); }
+  td.sig, code { font-family: var(--mono); font-size: 0.81rem; }
+  td.sig { white-space: nowrap; color: var(--accent-strong); }
+  td.contract { color: var(--text); }
+
+  ol.steps { padding-left: 1.3rem; margin: 0.6rem 0 0; }
+  ol.steps li { margin-bottom: 0.6rem; padding-left: 0.15rem; }
+  ol.steps li::marker { font-family: var(--mono); color: var(--accent-strong); font-size: 0.85em; }
+
+  .callout {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: 0.85rem 1rem;
+    font-size: 0.89rem;
+    color: var(--text);
+    margin: 1.1rem 0;
+  }
+  .callout strong { color: var(--accent-strong); }
+
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    font-size: 0.79rem;
+    line-height: 1.55;
+  }
+  pre code { font-family: var(--mono); color: var(--text); background: none; }
+
+  .tag {
+    font-family: var(--mono);
+    font-size: 0.71rem;
+    font-weight: 600;
+    padding: 0.05rem 0.4rem;
+    border-radius: 3px;
+    letter-spacing: 0.02em;
+  }
+  .tag.a { color: var(--feed-a); background: var(--feed-a-soft); }
+  .tag.b { color: var(--feed-b); background: var(--feed-b-soft); }
+  .tag.dup { color: var(--dup); background: var(--dup-soft); }
+
+  .flow {
+    font-family: var(--mono);
+    font-size: 0.81rem;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+    white-space: pre;
+    font-variant-numeric: tabular-nums;
+  }
+  .flow .a-line { color: var(--feed-a); }
+  .flow .b-line { color: var(--feed-b); }
+  .flow .drop-line { color: var(--dup); opacity: 0.85; }
+
+  figure.diagram {
+    margin: 1.5rem 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.1rem 1.1rem 0.9rem;
+    box-shadow: var(--shadow);
+    overflow-x: auto;
+  }
+  figure.diagram svg { display: block; width: 100%; height: auto; min-width: 600px; }
+  figure.diagram figcaption {
+    margin-top: 0.8rem;
+    padding-top: 0.7rem;
+    border-top: 1px dashed var(--border);
+    font-size: 0.81rem;
+    color: var(--text-muted);
+  }
+  .dg-text { font-family: var(--mono); fill: currentColor; }
+  .dg-box { fill: var(--surface); stroke: currentColor; stroke-width: 1.25; }
+  .dg-box.dim { opacity: 0.4; }
+  .dg-box.decision { stroke-dasharray: 3 3; }
+  .dg-node { fill: var(--code-bg); stroke: currentColor; stroke-width: 1.25; }
+  .dg-line { stroke: currentColor; fill: none; stroke-width: 1.25; }
+  .dg-dashed { stroke: currentColor; fill: none; stroke-width: 1; stroke-dasharray: 4 3; opacity: 0.6; }
+  .dg-a-stroke { stroke: var(--feed-a); }
+  .dg-a-fill { fill: var(--feed-a-soft); stroke: var(--feed-a); }
+  .dg-a-text { fill: var(--feed-a); font-weight: 600; }
+  .dg-b-fill { fill: var(--feed-b-soft); stroke: var(--feed-b); }
+  .dg-b-text { fill: var(--feed-b); font-weight: 600; }
+  .dg-dup-fill { fill: var(--dup-soft); stroke: var(--dup); opacity: 0.85; }
+  .dg-dup-text { fill: var(--dup); }
+  .dg-accent-stroke { stroke: var(--accent); }
+  .dg-accent-fill { fill: var(--accent); }
+  .dg-accent-text { fill: var(--accent-strong); font-weight: 600; }
+
+  .design-notes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+  .design-notes .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.9rem 1rem;
+    box-shadow: var(--shadow);
+  }
+  .design-notes .card h4 {
+    margin: 0 0 0.4rem;
+    font-family: var(--mono);
+    font-size: 0.71rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--accent-strong);
+    font-weight: 600;
+  }
+  .design-notes .card p { margin: 0; font-size: 0.89rem; color: var(--text); }
+
+  footer.end {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    font-size: 0.71rem;
+    padding: 2.5rem 1rem 3rem;
+    border-top: 1px solid var(--border);
+  }
+
+  @media (max-width: 840px) {
+    .shell { grid-template-columns: 1fr; }
+    .stack-nav { position: static; max-height: none; padding: 1.5rem 1.5rem 0; }
+    main { padding: 0 1.5rem 4rem; }
+  }
+</style>
+
+<div class="shell">
+  <header class="masthead">
+    <div class="kicker">Architecture reference</div>
+    <h1>UDP Merger Anatomy</h1>
+    <p>Two redundant UDP feeds carry the same sequence-numbered messages, out of order, with duplicates. Three small classes turn that into one strictly-ordered, gap-free, zero-copy-on-the-fast-path stream. This is how, with a diagram and a full worked trace for each piece.</p>
+    <div class="legend">
+      <span><span class="dot a"></span>feed A</span>
+      <span><span class="dot b"></span>feed B</span>
+      <span><span class="dot acc"></span>sequencer / merged output</span>
+      <span><span class="dot dup"></span>dropped — late duplicate or already buffered</span>
+    </div>
+  </header>
+
+  <nav class="stack-nav" aria-label="Module stack">
+    <h2>Dependency stack</h2>
+    <ul class="stack-list">
+      <li><a href="#sequencer"><span class="n">1</span><span><span class="name">Sequencer</span><span class="role">the cursor</span></span></a></li>
+      <li><a href="#udpbuffer"><span class="n">2</span><span><span class="name">UdpBuffer</span><span class="role">reorder ring</span></span></a></li>
+      <li><a href="#udpmergeconsumer"><span class="n">3</span><span><span class="name">UdpMergeConsumer</span><span class="role">the orchestrator</span></span></a></li>
+      <li><a href="#example"><span class="n">4</span><span><span class="name">Worked example</span><span class="role">traced end to end</span></span></a></li>
+    </ul>
+    <div class="stack-foot">each layer only knows about the layer below it</div>
+  </nav>
+
+  <main>
+
+    <!-- 1. Sequencer -->
+    <section class="module" id="sequencer">
+      <div class="module-head"><span class="idx">01</span><h2>Sequencer</h2></div>
+      <p class="module-file">udp_feed_merger.cpp — class Sequencer</p>
+      <p class="lede">The merger's cursor: one number, the next sequence value it's waiting for. Everything else in the file exists to answer one question this class asks — <em>"has that arrived yet?"</em> — and to keep advancing it once the answer is yes.</p>
+
+      <h3 class="subhead">API</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Signature</th><th>Contract</th></tr></thead>
+          <tbody>
+            <tr><td class="sig">uint64_t getNextSeq() const</td><td class="contract">The next sequence number the downstream consumer is waiting for. Starts at 1 — feed sequence numbers are 1-based.</td></tr>
+            <tr><td class="sig">uint64_t incrementSeq()</td><td class="contract">Advances the cursor by one and returns the new value. Called exactly once per delivered message, never per packet — duplicates and buffered arrivals don't move it.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <pre><code>class Sequencer {
+    std::uint64_t next_seq_ = 1;
+public:
+    [[nodiscard]] std::uint64_t getNextSeq() const { return next_seq_; }
+    [[nodiscard]] std::uint64_t incrementSeq() { return ++next_seq_; }
+};</code></pre>
+
+      <div class="callout"><strong>Why it's its own class</strong> — <code>UdpMergeConsumer</code> compares against it, <code>UdpBuffer</code> bounds-checks against it, and neither owns it. Splitting the cursor out means the ordering invariant lives in exactly one place, and it's trivial to reason about in isolation.</div>
+    </section>
+
+    <!-- 2. UdpBuffer -->
+    <section class="module" id="udpbuffer">
+      <div class="module-head"><span class="idx">02</span><h2>UdpBuffer</h2></div>
+      <p class="module-file">udp_feed_merger.cpp — class UdpBuffer</p>
+      <p class="lede">A fixed-capacity ring, indexed by sequence number, that holds packets which arrived <em>ahead</em> of the cursor until the gap in front of them closes. Its whole reason to exist: an out-of-order arrival needs somewhere to sit that isn't a per-packet heap allocation.</p>
+
+      <h3 class="subhead">Layout</h3>
+      <figure class="diagram">
+        <svg viewBox="0 0 900 460" role="img" aria-label="Eight-slot illustrative ring buffer with slots 4, 5, and 6 occupied by sequence numbers 4 (feed A), 5 (feed B), and 6 (feed A), positioned via indexFor(seq) = seq bitwise-and (Capacity minus 1). Below, the parallel contiguous payload_storage_ array, one fixed-size region per slot index, with slot 4 shown mapping directly to its byte offset.">
+          <defs>
+            <marker id="arrH" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="currentColor" />
+            </marker>
+          </defs>
+
+          <text class="dg-text dg-accent-text" x="450" y="24" font-size="12" text-anchor="middle">indexFor(seq) = seq &amp; (Capacity − 1)</text>
+          <text class="dg-text" x="450" y="40" font-size="9.5" text-anchor="middle" opacity="0.65">shown at illustrative Capacity = 8 · production Capacity = 1024</text>
+
+          <!-- ring slots (empty) -->
+          <rect class="dg-box dim" x="231" y="47" width="58" height="36" /><text class="dg-text dim" x="252" y="69" font-size="11">0</text>
+          <rect class="dg-box dim" x="319" y="84" width="58" height="36" /><text class="dg-text dim" x="340" y="106" font-size="11">1</text>
+          <rect class="dg-box dim" x="356" y="172" width="58" height="36" /><text class="dg-text dim" x="377" y="194" font-size="11">2</text>
+          <rect class="dg-box dim" x="143" y="84" width="58" height="36" /><text class="dg-text dim" x="164" y="106" font-size="11">7</text>
+
+          <!-- occupied slots 4, 5, 6 -->
+          <rect class="dg-a-fill" x="231" y="297" width="58" height="36" />
+          <text class="dg-text dg-a-text" x="260" y="311" font-size="10" text-anchor="middle">4</text>
+          <text class="dg-text" x="260" y="325" font-size="8.5" text-anchor="middle" opacity="0.8">seq 4 · A</text>
+
+          <rect class="dg-b-fill" x="143" y="260" width="58" height="36" />
+          <text class="dg-text dg-b-text" x="172" y="274" font-size="10" text-anchor="middle">5</text>
+          <text class="dg-text" x="172" y="288" font-size="8.5" text-anchor="middle" opacity="0.8">seq 5 · B</text>
+
+          <rect class="dg-a-fill" x="106" y="172" width="58" height="36" />
+          <text class="dg-text dg-a-text" x="135" y="186" font-size="10" text-anchor="middle">6</text>
+          <text class="dg-text" x="135" y="200" font-size="8.5" text-anchor="middle" opacity="0.8">seq 6 · A</text>
+
+          <rect class="dg-box dim" x="356" y="84" width="58" height="36" /><text class="dg-text dim" x="377" y="106" font-size="11">3</text>
+
+          <!-- center label -->
+          <text class="dg-text" x="260" y="192" font-size="9.5" text-anchor="middle" opacity="0.7">slots_</text>
+          <text class="dg-text" x="260" y="204" font-size="8.5" text-anchor="middle" opacity="0.55">array&lt;Slot, Capacity&gt;</text>
+
+          <!-- incoming example -->
+          <rect class="dg-node" x="20" y="140" width="94" height="34" />
+          <text class="dg-text" x="67" y="158" font-size="9.5" text-anchor="middle">A, seq 6</text>
+          <text class="dg-text" x="67" y="169" font-size="8" text-anchor="middle" opacity="0.6">arrives</text>
+          <path class="dg-dashed dg-a-stroke" d="M85,174 L120,183" marker-end="url(#arrH)" />
+
+          <!-- payload storage row -->
+          <text class="dg-text" x="20" y="380" font-size="10.5">payload_storage_ — Capacity × MaxPayloadSize bytes, allocated once, contiguous</text>
+          <g font-size="10">
+            <rect class="dg-box dim" x="20" y="392" width="94" height="40" /><text class="dg-text dim" x="60" y="416" font-size="10" text-anchor="middle">0</text>
+            <rect class="dg-box dim" x="120" y="392" width="94" height="40" /><text class="dg-text dim" x="160" y="416" font-size="10" text-anchor="middle">1</text>
+            <rect class="dg-box dim" x="220" y="392" width="94" height="40" /><text class="dg-text dim" x="260" y="416" font-size="10" text-anchor="middle">2</text>
+            <rect class="dg-box dim" x="320" y="392" width="94" height="40" /><text class="dg-text dim" x="360" y="416" font-size="10" text-anchor="middle">3</text>
+            <rect class="dg-a-fill" x="420" y="392" width="94" height="40" /><text class="dg-text dg-a-text" x="460" y="416" font-size="10" text-anchor="middle">4</text>
+            <rect class="dg-b-fill" x="520" y="392" width="94" height="40" /><text class="dg-text dg-b-text" x="560" y="416" font-size="10" text-anchor="middle">5</text>
+            <rect class="dg-a-fill" x="620" y="392" width="94" height="40" /><text class="dg-text dg-a-text" x="660" y="416" font-size="10" text-anchor="middle">6</text>
+            <rect class="dg-box dim" x="720" y="392" width="94" height="40" /><text class="dg-text dim" x="760" y="416" font-size="10" text-anchor="middle">7</text>
+          </g>
+          <text class="dg-text" x="467" y="447" font-size="8.5" opacity="0.65" text-anchor="middle">payloadData(i) = payload_storage_.data() + i × MaxPayloadSize</text>
+
+          <path class="dg-dashed dg-a-stroke" d="M260,333 L460,392" marker-end="url(#arrH)" />
+          <text class="dg-text" x="330" y="368" font-size="8.5" opacity="0.75">same index</text>
+        </svg>
+        <figcaption>The ring right before send #9 (<code>A, seq 3</code>) arrives: slots 4, 5, 6 hold packets that got there early. Each slot's index is its sequence number masked by <code>Capacity − 1</code> — one <code>AND</code> instruction, no hashing, no search — and that same index locates its bytes in <code>payload_storage_</code>, so a stored packet costs one <code>memcpy</code> into a preallocated region, never a heap allocation.</figcaption>
+      </figure>
+
+      <h3 class="subhead">API</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Signature</th><th>Contract</th></tr></thead>
+          <tbody>
+            <tr><td class="sig">UdpBuffer()</td><td class="contract">Sizes and zero-fills <code>payload_storage_</code> once: <code>Capacity × MaxPayloadSize</code> bytes. The only allocation in the object's lifetime.</td></tr>
+            <tr><td class="sig">AddResult addPacket(uint64_t next_expected, const PacketInput&amp;) noexcept</td><td class="contract">Bounds-checks and stores an out-of-order packet. Never throws — every failure mode is a value in <code>AddResult</code> for the caller to act on.</td></tr>
+            <tr><td class="sig">template&lt;Consumer&gt; bool consumePacket(uint64_t seq, Consumer&amp;&amp;)</td><td class="contract">If <code>seq</code> is resident, hands the callback a <code>PacketView</code> straight out of ring storage and frees the slot; returns whether it found anything.</td></tr>
+            <tr><td class="sig">struct PacketInput { char feed; uint64_t seq; const char* data; size_t len; }</td><td class="contract">Bundles <code>addPacket</code>'s four inputs so the call site passes one aggregate instead of four positional arguments.</td></tr>
+            <tr><td class="sig">struct PacketView { char feed; span&lt;const char&gt; payload; }</td><td class="contract">A non-owning view into ring storage. Valid only for the duration of the <code>consume()</code> call — the slot is freed immediately after.</td></tr>
+            <tr><td class="sig">enum class AddResult</td><td class="contract"><code>stored</code>, <code>duplicate</code>, <code>out_of_window</code>, <code>payload_too_large</code>, <code>invalid_data</code>, <code>slot_collision</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 class="subhead">addPacket, in order</h3>
+      <ol class="steps">
+        <li>Reject a null pointer paired with a nonzero length (<code>invalid_data</code>), then reject a payload bigger than <code>MaxPayloadSize</code> (<code>payload_too_large</code>) — before touching the ring at all.</li>
+        <li>Reject anything not strictly ahead of <code>next_expected</code>, and anything more than <code>Capacity</code> ahead of it (<code>out_of_window</code>). This is the line that keeps two live sequence numbers from ever landing on the same slot: they'd have to be <code>Capacity</code> apart, which this check refuses to let happen.</li>
+        <li>Compute the slot via <code>indexFor(seq)</code>. If it's occupied, this exact <code>seq</code> means <code>duplicate</code> (already buffered, harmless); any other <code>seq</code> in that slot means <code>slot_collision</code> — the window check above should make this unreachable, so it exists purely to fail loudly instead of corrupting a live packet.</li>
+        <li>Copy the payload into <code>payload_storage_</code> at that slot's offset, record <code>seq</code>/<code>len</code>/<code>feed</code>, mark it occupied, return <code>stored</code>.</li>
+      </ol>
+
+      <pre><code>if (seq &lt;= next_expected ||
+    seq - next_expected &gt; static_cast&lt;std::uint64_t&gt;(Capacity)) {
+  return AddResult::out_of_window;
+}</code></pre>
+    </section>
+
+    <!-- 3. UdpMergeConsumer -->
+    <section class="module" id="udpmergeconsumer">
+      <div class="module-head"><span class="idx">03</span><h2>UdpMergeConsumer</h2></div>
+      <p class="module-file">udp_feed_merger.cpp — class UdpMergeConsumer</p>
+      <p class="lede">Owns a <code>Sequencer</code> and a <code>UdpBuffer</code> and is the merger's only entry point. <code>handlePacket</code> is called once per received packet, from either feed, in whatever order they physically arrive — everything above exists to make that one function correct and fast.</p>
+
+      <h3 class="subhead">Control flow</h3>
+      <figure class="diagram">
+        <svg viewBox="0 0 700 520" role="img" aria-label="Decision flow of handlePacket: a packet whose sequence number is less than next_seq_ is dropped as a late duplicate. A packet equal to next_seq_ is delivered immediately, the cursor advances, and the ring buffer drains every consecutive sequence number it already holds. A packet ahead of next_seq_ is wrapped and handed to UdpBuffer::addPacket, whose result either returns quietly (stored or duplicate) or throws (every other outcome).">
+          <defs>
+            <marker id="arrF" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="currentColor" />
+            </marker>
+          </defs>
+
+          <rect class="dg-box" x="60" y="20" width="320" height="50" />
+          <text class="dg-text" x="220" y="41" font-size="11" text-anchor="middle">handlePacket(feed, seq, data, len)</text>
+          <text class="dg-text" x="220" y="57" font-size="9" text-anchor="middle" opacity="0.65">length / null-payload checks first</text>
+          <line class="dg-line" x1="220" y1="70" x2="220" y2="94" marker-end="url(#arrF)" />
+
+          <rect class="dg-box decision" x="60" y="94" width="320" height="46" />
+          <text class="dg-text" x="220" y="121" font-size="11" text-anchor="middle">seq &lt; next_seq_ ?</text>
+          <line class="dg-line" x1="380" y1="117" x2="460" y2="117" marker-end="url(#arrF)" />
+          <text class="dg-text dg-accent-text" x="392" y="110" font-size="9.5">yes</text>
+          <line class="dg-line" x1="220" y1="140" x2="220" y2="164" marker-end="url(#arrF)" />
+          <text class="dg-text" x="230" y="155" font-size="9.5" opacity="0.75">no</text>
+
+          <rect class="dg-node dg-dup-fill" x="460" y="94" width="200" height="46" />
+          <text class="dg-text dg-dup-text" x="560" y="115" font-size="10.5" text-anchor="middle">drop packet</text>
+          <text class="dg-text" x="560" y="130" font-size="9" text-anchor="middle" opacity="0.75">late duplicate — return</text>
+
+          <rect class="dg-box decision" x="60" y="164" width="320" height="46" />
+          <text class="dg-text" x="220" y="191" font-size="11" text-anchor="middle">seq == next_seq_ ?</text>
+          <line class="dg-line" x1="380" y1="187" x2="460" y2="187" marker-end="url(#arrF)" />
+          <text class="dg-text" x="392" y="180" font-size="9.5" opacity="0.75">no</text>
+          <line class="dg-line" x1="220" y1="210" x2="220" y2="234" marker-end="url(#arrF)" />
+          <text class="dg-text dg-accent-text" x="230" y="225" font-size="9.5">yes</text>
+
+          <rect class="dg-a-fill" x="460" y="164" width="200" height="46" />
+          <text class="dg-text" x="560" y="185" font-size="10" text-anchor="middle">wrap as PacketInput</text>
+          <text class="dg-text" x="560" y="200" font-size="8.5" text-anchor="middle" opacity="0.75">{feed, seq, data, len}</text>
+          <line class="dg-line" x1="560" y1="210" x2="560" y2="234" marker-end="url(#arrF)" />
+
+          <rect class="dg-node" x="60" y="234" width="320" height="44" />
+          <text class="dg-text" x="220" y="256" font-size="10.5" text-anchor="middle">deliver(feed, seq, data, len)</text>
+          <text class="dg-text" x="220" y="270" font-size="8.5" text-anchor="middle" opacity="0.7">zero-copy — straight from the packet</text>
+          <line class="dg-line" x1="220" y1="278" x2="220" y2="302" marker-end="url(#arrF)" />
+
+          <rect class="dg-box" x="460" y="234" width="200" height="50" />
+          <text class="dg-text" x="560" y="255" font-size="10" text-anchor="middle">buffer_.addPacket(</text>
+          <text class="dg-text" x="560" y="269" font-size="10" text-anchor="middle">next_seq_, packet)</text>
+          <line class="dg-line" x1="560" y1="284" x2="560" y2="308" marker-end="url(#arrF)" />
+
+          <rect class="dg-box" x="60" y="302" width="320" height="40" />
+          <text class="dg-text" x="220" y="326" font-size="10.5" text-anchor="middle">next_seq_ = sequencer_.incrementSeq()</text>
+          <line class="dg-line" x1="220" y1="342" x2="220" y2="366" marker-end="url(#arrF)" />
+
+          <rect class="dg-box decision" x="460" y="308" width="200" height="42" />
+          <text class="dg-text" x="560" y="326" font-size="10" text-anchor="middle">switch (AddResult)</text>
+          <line class="dg-line" x1="540" y1="350" x2="540" y2="374" marker-end="url(#arrF)" />
+          <line class="dg-line" x1="580" y1="350" x2="580" y2="428" marker-end="url(#arrF)" />
+
+          <rect class="dg-box decision" x="60" y="366" width="320" height="48" />
+          <text class="dg-text" x="220" y="386" font-size="10.5" text-anchor="middle">consumePacket(next_seq_)</text>
+          <text class="dg-text" x="220" y="400" font-size="9" text-anchor="middle" opacity="0.7">found in the ring?</text>
+          <line class="dg-line" x1="220" y1="414" x2="220" y2="438" marker-end="url(#arrF)" />
+          <text class="dg-text" x="230" y="430" font-size="9.5" opacity="0.75">no</text>
+
+          <polyline class="dg-line dg-accent-stroke" points="60,390 20,390 20,256 60,256" marker-end="url(#arrF)" fill="none" />
+          <text class="dg-text dg-accent-text" x="14" y="330" font-size="8.5" transform="rotate(-90 14 330)" text-anchor="middle">yes → deliver buffered packet, repeat</text>
+
+          <rect class="dg-node" x="60" y="438" width="320" height="40" />
+          <text class="dg-text" x="220" y="462" font-size="10.5" text-anchor="middle">drain complete — return</text>
+
+          <rect class="dg-a-fill" x="460" y="374" width="200" height="40" />
+          <text class="dg-text" x="560" y="391" font-size="9.5" text-anchor="middle">stored / duplicate</text>
+          <text class="dg-text" x="560" y="404" font-size="8.5" text-anchor="middle" opacity="0.75">→ return</text>
+
+          <rect class="dg-dup-fill" x="460" y="428" width="200" height="64" />
+          <text class="dg-text dg-dup-text" x="560" y="446" font-size="9" text-anchor="middle">out_of_window, payload_too_large,</text>
+          <text class="dg-text dg-dup-text" x="560" y="459" font-size="9" text-anchor="middle">invalid_data, slot_collision</text>
+          <text class="dg-text" x="560" y="474" font-size="8.5" text-anchor="middle" opacity="0.8">→ throw</text>
+        </svg>
+        <figcaption>Every packet takes exactly one of three paths: dropped as a late duplicate, delivered immediately with the ring drained behind it, or parked in the ring ahead of schedule. The right-hand branch's five outcomes collapse to two shapes — quietly absorbed, or thrown as a protocol violation.</figcaption>
+      </figure>
+
+      <h3 class="subhead">API</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Signature</th><th>Contract</th></tr></thead>
+          <tbody>
+            <tr><td class="sig">void handlePacket(char feed, uint64_t seq, const char* data, size_t len)</td><td class="contract">The merger's only entry point. Called once per packet received, regardless of which feed it came from.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout"><strong>The drain loop delivers from the ring, not from the triggering packet</strong> — after the fast-path <code>deliver</code> call, the <code>while</code> loop keeps asking <code>consumePacket(next_seq_, …)</code> and delivering whatever it finds, so one arriving packet can release an arbitrarily long run that was waiting in the ring, all inside a single <code>handlePacket</code> call.</div>
+
+      <pre><code>deliver(feed, seq, data, len);
+auto expected = sequencer_.incrementSeq();
+
+while (buffer_.consumePacket(
+    expected,
+    [this, expected](const UdpBuffer::PacketView&amp; packet) {
+      deliver(packet.feed, expected, packet.payload.data(), packet.payload.size());
+    })) {
+  expected = sequencer_.incrementSeq();
+}</code></pre>
+    </section>
+
+    <!-- 4. Worked example -->
+    <section class="module" id="example">
+      <div class="module-head"><span class="idx">04</span><h2>Worked example</h2></div>
+      <p class="module-file">udp_feed_merger.cpp — main()</p>
+      <p class="lede">The file's own test data, traced call by call. Twelve <code>send</code> calls, twelve calls to <code>handlePacket</code>, six of them producing output — in strict order, each sequence number exactly once, regardless of which feed happened to carry the winning copy.</p>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 940 400" role="img" aria-label="Twelve packet arrivals in call order across feeds A and B: three delivered immediately, three buffered and later drained, and six dropped as late duplicates or already-buffered duplicates. Sequence numbers 5, 6, and 4 arrive early and sit in the ring buffer until sequence 3 arrives and drains all three; the merged output row below shows the resulting strictly ordered delivery sequence 1 through 6.">
+          <defs>
+            <marker id="arrC" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="currentColor" />
+            </marker>
+          </defs>
+
+          <text class="dg-text" x="34" y="16" font-size="10" opacity="0.65">arrivals — call order</text>
+
+          <!-- 12 arrival boxes -->
+          <!-- 1: A,1 deliver -->
+          <text class="dg-text" x="62" y="46" font-size="9" text-anchor="middle" opacity="0.6">1</text>
+          <rect class="dg-a-fill" x="34" y="54" width="56" height="38" />
+          <text class="dg-text dg-a-text" x="62" y="77" font-size="10.5" text-anchor="middle">A · 1</text>
+          <text class="dg-text" x="62" y="104" font-size="8" text-anchor="middle" opacity="0.75">deliver</text>
+
+          <!-- 2: B,1 drop late -->
+          <text class="dg-text" x="136" y="46" font-size="9" text-anchor="middle" opacity="0.6">2</text>
+          <rect class="dg-dup-fill" x="108" y="54" width="56" height="38" />
+          <text class="dg-text dg-dup-text" x="136" y="77" font-size="10.5" text-anchor="middle">B · 1</text>
+          <text class="dg-text" x="136" y="104" font-size="8" text-anchor="middle" opacity="0.75">drop · late</text>
+
+          <!-- 3: B,2 deliver -->
+          <text class="dg-text" x="210" y="46" font-size="9" text-anchor="middle" opacity="0.6">3</text>
+          <rect class="dg-b-fill" x="182" y="54" width="56" height="38" />
+          <text class="dg-text dg-b-text" x="210" y="77" font-size="10.5" text-anchor="middle">B · 2</text>
+          <text class="dg-text" x="210" y="104" font-size="8" text-anchor="middle" opacity="0.75">deliver</text>
+
+          <!-- 4: A,2 drop late -->
+          <text class="dg-text" x="284" y="46" font-size="9" text-anchor="middle" opacity="0.6">4</text>
+          <rect class="dg-dup-fill" x="256" y="54" width="56" height="38" />
+          <text class="dg-text dg-dup-text" x="284" y="77" font-size="10.5" text-anchor="middle">A · 2</text>
+          <text class="dg-text" x="284" y="104" font-size="8" text-anchor="middle" opacity="0.75">drop · late</text>
+
+          <!-- 5: B,5 buffer -->
+          <text class="dg-text" x="358" y="46" font-size="9" text-anchor="middle" opacity="0.6">5</text>
+          <rect class="dg-b-fill" x="330" y="54" width="56" height="38" />
+          <text class="dg-text dg-b-text" x="358" y="77" font-size="10.5" text-anchor="middle">B · 5</text>
+          <text class="dg-text" x="358" y="104" font-size="8" text-anchor="middle" opacity="0.75">buffer</text>
+
+          <!-- 6: A,6 buffer -->
+          <text class="dg-text" x="432" y="46" font-size="9" text-anchor="middle" opacity="0.6">6</text>
+          <rect class="dg-a-fill" x="404" y="54" width="56" height="38" />
+          <text class="dg-text dg-a-text" x="432" y="77" font-size="10.5" text-anchor="middle">A · 6</text>
+          <text class="dg-text" x="432" y="104" font-size="8" text-anchor="middle" opacity="0.75">buffer</text>
+
+          <!-- 7: A,4 buffer -->
+          <text class="dg-text" x="506" y="46" font-size="9" text-anchor="middle" opacity="0.6">7</text>
+          <rect class="dg-a-fill" x="478" y="54" width="56" height="38" />
+          <text class="dg-text dg-a-text" x="506" y="77" font-size="10.5" text-anchor="middle">A · 4</text>
+          <text class="dg-text" x="506" y="104" font-size="8" text-anchor="middle" opacity="0.75">buffer</text>
+
+          <!-- 8: A,4 drop dup -->
+          <text class="dg-text" x="580" y="46" font-size="9" text-anchor="middle" opacity="0.6">8</text>
+          <rect class="dg-dup-fill" x="552" y="54" width="56" height="38" />
+          <text class="dg-text dg-dup-text" x="580" y="77" font-size="10.5" text-anchor="middle">A · 4</text>
+          <text class="dg-text" x="580" y="104" font-size="8" text-anchor="middle" opacity="0.75">drop · dup</text>
+
+          <!-- 9: A,3 deliver, drains -->
+          <text class="dg-text" x="654" y="46" font-size="9" text-anchor="middle" opacity="0.6">9</text>
+          <rect class="dg-a-fill" x="626" y="54" width="56" height="38" />
+          <text class="dg-text dg-a-text" x="654" y="77" font-size="10.5" text-anchor="middle">A · 3</text>
+          <text class="dg-text" x="654" y="104" font-size="8" text-anchor="middle" opacity="0.75">deliver</text>
+
+          <!-- 10: A,5 drop late -->
+          <text class="dg-text" x="728" y="46" font-size="9" text-anchor="middle" opacity="0.6">10</text>
+          <rect class="dg-dup-fill" x="700" y="54" width="56" height="38" />
+          <text class="dg-text dg-dup-text" x="728" y="77" font-size="10.5" text-anchor="middle">A · 5</text>
+          <text class="dg-text" x="728" y="104" font-size="8" text-anchor="middle" opacity="0.75">drop · late</text>
+
+          <!-- 11: B,3 drop late -->
+          <text class="dg-text" x="802" y="46" font-size="9" text-anchor="middle" opacity="0.6">11</text>
+          <rect class="dg-dup-fill" x="774" y="54" width="56" height="38" />
+          <text class="dg-text dg-dup-text" x="802" y="77" font-size="10.5" text-anchor="middle">B · 3</text>
+          <text class="dg-text" x="802" y="104" font-size="8" text-anchor="middle" opacity="0.75">drop · late</text>
+
+          <!-- 12: B,4 drop late -->
+          <text class="dg-text" x="876" y="46" font-size="9" text-anchor="middle" opacity="0.6">12</text>
+          <rect class="dg-dup-fill" x="848" y="54" width="56" height="38" />
+          <text class="dg-text dg-dup-text" x="876" y="77" font-size="10.5" text-anchor="middle">B · 4</text>
+          <text class="dg-text" x="876" y="104" font-size="8" text-anchor="middle" opacity="0.75">drop · late</text>
+
+          <!-- shelf label -->
+          <text class="dg-text dg-accent-text" x="490" y="142" font-size="10">ring buffer — held until call #9 (A, seq 3) fills the gap</text>
+
+          <!-- connectors into shelf -->
+          <path class="dg-dashed dg-b-fill" d="M358,92 Q520,120 690,150" marker-end="url(#arrC)" />
+          <path class="dg-dashed dg-a-fill" d="M432,92 Q650,115 840,150" marker-end="url(#arrC)" />
+          <path class="dg-dashed dg-a-fill" d="M506,92 Q515,115 540,150" marker-end="url(#arrC)" />
+
+          <!-- shelf boxes -->
+          <rect class="dg-a-fill" x="490" y="150" width="100" height="40" />
+          <text class="dg-text dg-a-text" x="540" y="174" font-size="11" text-anchor="middle">seq 4 · A</text>
+
+          <rect class="dg-b-fill" x="640" y="150" width="100" height="40" />
+          <text class="dg-text dg-b-text" x="690" y="174" font-size="11" text-anchor="middle">seq 5 · B</text>
+
+          <rect class="dg-a-fill" x="790" y="150" width="100" height="40" />
+          <text class="dg-text dg-a-text" x="840" y="174" font-size="11" text-anchor="middle">seq 6 · A</text>
+
+          <!-- shelf to output arrows -->
+          <line class="dg-line dg-accent-stroke" x1="540" y1="190" x2="540" y2="290" marker-end="url(#arrC)" />
+          <line class="dg-line dg-accent-stroke" x1="690" y1="190" x2="690" y2="290" marker-end="url(#arrC)" />
+          <line class="dg-line dg-accent-stroke" x1="840" y1="190" x2="840" y2="290" marker-end="url(#arrC)" />
+
+          <text class="dg-text dg-accent-text" x="34" y="282" font-size="10" opacity="0.9">merged output — delivery order, no gaps</text>
+
+          <!-- output row -->
+          <rect class="dg-node" x="40" y="290" width="100" height="46" />
+          <text class="dg-text" x="90" y="308" font-size="11" text-anchor="middle">seq 1</text>
+          <text class="dg-text dg-a-text" x="90" y="324" font-size="8.5" text-anchor="middle">A · call #1</text>
+
+          <rect class="dg-node" x="190" y="290" width="100" height="46" />
+          <text class="dg-text" x="240" y="308" font-size="11" text-anchor="middle">seq 2</text>
+          <text class="dg-text dg-b-text" x="240" y="324" font-size="8.5" text-anchor="middle">B · call #3</text>
+
+          <rect class="dg-node" x="340" y="290" width="100" height="46" />
+          <text class="dg-text" x="390" y="308" font-size="11" text-anchor="middle">seq 3</text>
+          <text class="dg-text dg-a-text" x="390" y="324" font-size="8.5" text-anchor="middle">A · call #9</text>
+
+          <rect class="dg-node" x="490" y="290" width="100" height="46" />
+          <text class="dg-text" x="540" y="308" font-size="11" text-anchor="middle">seq 4</text>
+          <text class="dg-text dg-a-text" x="540" y="324" font-size="8.5" text-anchor="middle">A · from ring</text>
+
+          <rect class="dg-node" x="640" y="290" width="100" height="46" />
+          <text class="dg-text" x="690" y="308" font-size="11" text-anchor="middle">seq 5</text>
+          <text class="dg-text dg-b-text" x="690" y="324" font-size="8.5" text-anchor="middle">B · from ring</text>
+
+          <rect class="dg-node" x="790" y="290" width="100" height="46" />
+          <text class="dg-text" x="840" y="308" font-size="11" text-anchor="middle">seq 6</text>
+          <text class="dg-text dg-a-text" x="840" y="324" font-size="8.5" text-anchor="middle">A · from ring</text>
+
+          <text class="dg-text" x="470" y="366" font-size="9" text-anchor="middle" opacity="0.6">seq 1, 2, and 3 deliver straight from handlePacket — nothing about them ever touches the ring</text>
+        </svg>
+        <figcaption>Twelve arrivals, one merged stream. Sequence numbers 5, 6, and 4 (in that arrival order) land ahead of the cursor and sit in the ring; when call #9 finally supplies sequence 3, the fast path delivers it and the drain loop empties the ring in one sweep — 4, then 5, then 6 — inside that same <code>handlePacket</code> call.</figcaption>
+      </figure>
+
+      <h3 class="subhead">Actual program output</h3>
+      <div class="flow"><span class="a-line">Feed: A, Seq: 1, data: Message 1</span>
+<span class="b-line">Feed: B, Seq: 2, data: Message 2</span>
+<span class="a-line">Feed: A, Seq: 3, data: Message 3</span>
+<span class="a-line">Feed: A, Seq: 4, data: Message 4</span>
+<span class="b-line">Feed: B, Seq: 5, data: Message 5</span>
+<span class="a-line">Feed: A, Seq: 6, data: Message 6</span></div>
+      <p>Six lines from twelve calls — the other six were absorbed silently, either as late duplicates (<code>seq &lt; next_seq_</code>) or as a second copy of a packet already resident in the ring (<code>AddResult::duplicate</code>). Sequence numbers 1 through 6 appear exactly once each, in order, sourced from whichever feed's copy happened to be processed first.</p>
+    </section>
+
+    <!-- Design notes -->
+    <section class="module" id="design-notes">
+      <div class="module-head"><h2>Design Notes</h2></div>
+      <p class="lede">Cross-cutting properties that don't belong to any one class, but shape how the merger behaves as a whole.</p>
+
+      <div class="design-notes">
+        <div class="card">
+          <h4>Zero-copy fast path</h4>
+          <p>A packet that arrives exactly in order goes straight from <code>handlePacket</code> to <code>deliver</code> — no ring, no <code>memcpy</code>. Only a packet arriving ahead of schedule pays the copy-into-the-ring cost, and only once.</p>
+        </div>
+        <div class="card">
+          <h4>One allocation, ever</h4>
+          <p><code>payload_storage_</code> is sized in <code>UdpBuffer</code>'s constructor — <code>Capacity × MaxPayloadSize</code> bytes — and never resized. Steady-state operation never calls <code>new</code>.</p>
+        </div>
+        <div class="card">
+          <h4>Ordering guarantee</h4>
+          <p>Every sequence number is delivered exactly once, strictly increasing, no gaps. A late duplicate and an already-buffered duplicate are both silently absorbed rather than re-delivered.</p>
+        </div>
+        <div class="card">
+          <h4>Failure means a broken contract</h4>
+          <p><code>out_of_window</code>, <code>payload_too_large</code>, <code>invalid_data</code>, and <code>slot_collision</code> all throw. Each means the caller violated the exercise's own guarantees — more than <code>Capacity</code> messages outstanding, an oversized packet — not something the merger can route around.</p>
+        </div>
+        <div class="card">
+          <h4>Single-threaded, deterministic</h4>
+          <p>No locks, no background thread, no timers. Replaying the same interleaving of <code>handlePacket</code> calls always produces byte-identical output — the same property that makes <code>main()</code>'s scripted send order a complete test.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="end">udp-feed-merger</footer>
+</div>
